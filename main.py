@@ -64,7 +64,7 @@ Start every 1st conversation only with a friendly welcome like:
 
  Respond Only If:
 The question is clear
-The answer is found in the prompt or attached files: main.json, skills.json, termsConditions.docx
+The answer is found in the prompt 
 
 Otherwise, respond:
 
@@ -172,3 +172,4 @@ async def chat_with_assistant(body: ChatRequest):
     session_messages.append({"role": "assistant", "content": reply})
 
     return {"reply": reply}
+
