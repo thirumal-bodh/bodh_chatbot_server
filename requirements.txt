@@ -3,4 +3,5 @@ uvicorn
 pydantic
 requests
 python-dotenv
+openai
 gunicorn
