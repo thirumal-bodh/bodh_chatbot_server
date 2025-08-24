@@ -39,7 +39,7 @@ app.add_middleware(
 sessions = {}  # key: session_id, value: messages list
 
 SYSTEM_PROMPT = {"role": "system", "content": "You are Chaaya, calm AI guide for BODH."}
-MAX_MESSAGES = 15
+MAX_MESSAGES = 30
 
 # --------------------
 # Request Model
@@ -87,3 +87,4 @@ async def chat_with_assistant(body: ChatRequest):
     session_messages.append({"role": "assistant", "content": reply})
 
     return {"reply": reply}
+
