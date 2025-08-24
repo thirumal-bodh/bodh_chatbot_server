@@ -1,21 +1,25 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import requests
 import os
-import asyncio
 from dotenv import load_dotenv
+from openai import AzureOpenAI
 
 load_dotenv()
-
 
 # --------------------
 # CONFIGURATION
 # --------------------
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT").rstrip("/")  # Remove trailing slash
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT").rstrip("/")
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-API_VERSION = os.getenv("API_VERSION")
-AZURE_ASSISTANT_ID = os.getenv("AZURE_ASSISTANT_ID")
+API_VERSION = os.getenv("API_VERSION")  
+DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT")  
+
+client = AzureOpenAI(
+    api_version=API_VERSION,
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+    api_key=AZURE_OPENAI_API_KEY,
+)
 
 # --------------------
 # FASTAPI APP
@@ -30,83 +34,56 @@ app.add_middleware(
 )
 
 # --------------------
+# Session Memory
+# --------------------
+sessions = {}  # key: session_id, value: messages list
+
+SYSTEM_PROMPT = {"role": "system", "content": "You are Chaaya, calm AI guide for BODH."}
+MAX_MESSAGES = 15
+
+# --------------------
 # Request Model
 # --------------------
 class ChatRequest(BaseModel):
+    session_id: str
     message: str
+    end_session: bool = False
 
 # --------------------
 # Chat Endpoint
 # --------------------
 @app.post("/chat")
 async def chat_with_assistant(body: ChatRequest):
-    headers = {
-        "Content-Type": "application/json",
-        "api-key": AZURE_OPENAI_API_KEY,
-    }
+    session_id = body.session_id
 
-    # 1. Create thread
-    thread_resp = requests.post(
-        f"{AZURE_OPENAI_ENDPOINT}/openai/threads?api-version={API_VERSION}",
-        headers=headers,
+    
+    if body.end_session:
+        sessions.pop(session_id, None)
+        return {"reply": "Session ended. All memory cleared."}
+
+    
+    if session_id not in sessions:
+        sessions[session_id] = [SYSTEM_PROMPT]
+
+    session_messages = sessions[session_id]
+
+   
+    if len(session_messages) >= MAX_MESSAGES:
+        return {"reply": "Session limit reached. Start a new session."}
+
+    
+    session_messages.append({"role": "user", "content": body.message})
+
+    
+    response = client.chat.completions.create(
+        messages=session_messages,
+        model=DEPLOYMENT_NAME,
+        max_completion_tokens=1024,   
     )
-    thread_resp.raise_for_status()
-    thread_id = thread_resp.json()["id"]
 
+    reply = response.choices[0].message.content
 
-    user_message = body.message
+   
+    session_messages.append({"role": "assistant", "content": reply})
 
-    msg_resp = requests.post(
-        f"{AZURE_OPENAI_ENDPOINT}/openai/threads/{thread_id}/messages?api-version={API_VERSION}",
-        headers=headers,
-        json={
-            "role": "user",
-            "content": user_message
-        },
-    )
-    msg_resp.raise_for_status()
-
-    # 3. Create run
-    run_resp = requests.post(
-        f"{AZURE_OPENAI_ENDPOINT}/openai/threads/{thread_id}/runs?api-version={API_VERSION}",
-        headers=headers,
-        json={
-            "assistant_id": AZURE_ASSISTANT_ID
-        }
-    )
-    run_resp.raise_for_status()
-    run_id = run_resp.json()["id"]
-
-    # 4. Poll until run completes
-    while True:
-        run_status_resp = requests.get(
-            f"{AZURE_OPENAI_ENDPOINT}/openai/threads/{thread_id}/runs/{run_id}?api-version={API_VERSION}",
-            headers=headers,
-        )
-        run_status_resp.raise_for_status()
-        run_status = run_status_resp.json()["status"]
-
-        if run_status == "completed":
-            break
-        elif run_status in ["failed", "cancelled"]:
-            return {"error": f"Run failed with status {run_status}"}
-
-        await asyncio.sleep(1)
-
-    # 5. Retrieve assistant messages
-    messages_resp = requests.get(
-        f"{AZURE_OPENAI_ENDPOINT}/openai/threads/{thread_id}/messages?api-version={API_VERSION}",
-        headers=headers,
-    )
-    messages_resp.raise_for_status()
-    messages = messages_resp.json()["data"]
-
-    assistant_reply = "No reply found."
-    for m in reversed(messages):
-        if m["role"] == "assistant":
-            assistant_reply = m["content"][0]["text"]["value"]
-            break
-
-    return {
-        "reply": assistant_reply  
-    }
+    return {"reply": reply}
